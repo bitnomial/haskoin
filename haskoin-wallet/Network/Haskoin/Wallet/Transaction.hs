@@ -55,7 +55,7 @@ import Database.Esqueleto
     ( Value(..), SqlQuery, SqlExpr
     , InnerJoin(..), LeftOuterJoin(..), OrderBy, update, sum_, groupBy
     , select, from, where_, val, valList, sub_select, countRows, count
-    , orderBy, limit, asc, desc, set, offset, delete, countDistinct
+    , orderBy, limit, asc, desc, set, delete, countDistinct
     , in_, unValue, not_, coalesceDefault, just, on
     , case_, when_, then_, else_, distinct
     , (^.), (=.), (==.), (&&.), (||.), (<.)
@@ -106,11 +106,9 @@ txs :: MonadIO m
     -> SqlPersistT m ([WalletTx], Word32)
     -- ^ List result
 txs ai ListRequest{..} = do
-    cntRes <- select $ from $ \t -> do
+    [cnt] <- fmap (map unValue) $ select $ from $ \t -> do
         where_ $ t ^. WalletTxAccount ==. val ai
         return countRows
-
-    let cnt = maybe 0 unValue $ listToMaybe cntRes
 
     when (listOffset > 0 && listOffset >= cnt) $ throw $ WalletException
         "Offset beyond end of data set"
@@ -119,8 +117,7 @@ txs ai ListRequest{..} = do
         where_ $ t ^. WalletTxAccount ==. val ai
         let order = if listReverse then asc else desc
         orderBy [ order (t ^. WalletTxId) ]
-        limit $ fromIntegral listLimit
-        offset $ fromIntegral listOffset
+        limitOffset listLimit listOffset
         return t
 
     return (res, cnt)
@@ -156,7 +153,8 @@ addrTxs (Entity ai _) (Entity addrI WalletAddr{..}) ListRequest{..} = do
                         ||. not_ (E.isNothing (c2 ?. WalletCoinId))
                         )
                     )
-            orderBy [(if listReverse then desc else asc) (t ^. WalletTxId)]
+            let order = if listReverse then asc else desc
+            orderBy [ order (t ^. WalletTxId) ]
 
 
     cntRes <- select $ tables $ \t c s c2 -> do
@@ -168,11 +166,9 @@ addrTxs (Entity ai _) (Entity addrI WalletAddr{..}) ListRequest{..} = do
     when (listOffset > 0 && listOffset >= cnt) $ throw $ WalletException
         "Offset beyond end of data set"
 
-    -- Find all the tids
     res <- select $ distinct $ tables $ \t c s c2 -> do
          query t c s c2
-         offset $ fromIntegral listOffset
-         limit $ fromIntegral listLimit
+         limitOffset listLimit listOffset
          return t
 
     return (map (updBals . entityVal) res, cnt)
@@ -189,7 +185,6 @@ addrTxs (Entity ai _) (Entity addrI WalletAddr{..}) ListRequest{..} = do
         t { walletTxInValue  = output + change
           , walletTxOutValue = input
           }
-
 
 -- Helper function to get a transaction from the wallet database. The function
 -- will look across all accounts and return the first available transaction. If
@@ -986,7 +981,8 @@ buildUnsignedTx accE@(Entity ai acc) origDests origFee minConf rcptFee = do
     toOutPoint (InCoinData (Entity _ c) t _) =
         OutPoint (walletTxHash t) (walletCoinPos c)
     newChangeAddr change = do
-        as <- unusedAddresses accE AddressInternal
+        let lq = ListRequest 0 0 False
+        (as, _) <- unusedAddresses accE AddressInternal lq
         case as of
             (a:_) -> do
                 -- Use the address to prevent reusing it again
