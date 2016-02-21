@@ -3,6 +3,7 @@ module Network.Haskoin.Wallet.Transaction
 -- *Database transactions
   txs
 , addrTxs
+, accTxsFromBlock
 , getTx
 , getAccountTx
 , importTx
@@ -58,7 +59,7 @@ import Database.Esqueleto
     , orderBy, limit, asc, desc, set, delete, countDistinct
     , in_, unValue, not_, coalesceDefault, just, on
     , case_, when_, then_, else_, distinct
-    , (^.), (=.), (==.), (&&.), (||.), (<.)
+    , (^.), (=.), (==.), (&&.), (||.), (<.), (>.)
     , (<=.), (>=.), (-.), (?.), (!=.)
     -- Reexports from Database.Persist
     , SqlPersistT, Entity(..)
@@ -167,9 +168,9 @@ addrTxs (Entity ai _) (Entity addrI WalletAddr{..}) ListRequest{..} = do
         "Offset beyond end of data set"
 
     res <- select $ distinct $ tables $ \t c s c2 -> do
-         query t c s c2
-         limitOffset listLimit listOffset
-         return t
+        query t c s c2
+        limitOffset listLimit listOffset
+        return t
 
     return (map (updBals . entityVal) res, cnt)
 
@@ -185,6 +186,28 @@ addrTxs (Entity ai _) (Entity addrI WalletAddr{..}) ListRequest{..} = do
         t { walletTxInValue  = output + change
           , walletTxOutValue = input
           }
+
+accTxsFromBlock :: (MonadIO m, MonadThrow m)
+                => AccountId
+                -> BlockHeight
+                -> Word32 -- ^ Block count (0 for all)
+                -> SqlPersistT m [WalletTx]
+accTxsFromBlock ai bh n =
+    fmap (map entityVal) $ select $ from $ \t -> do
+        query t
+        orderBy [ asc (t ^. WalletTxConfirmedHeight), asc (t ^. WalletTxId) ]
+        return t
+  where
+    query t
+      | n == 0 = where_
+        (   t ^. WalletTxAccount ==. val ai
+        &&. t ^. WalletTxConfirmedHeight >.  just (val bh)
+        )
+      | otherwise = where_
+         (   t ^. WalletTxAccount ==. val ai
+         &&. t ^. WalletTxConfirmedHeight >.  just (val bh)
+         &&. t ^. WalletTxConfirmedHeight <=. just (val $ bh + n)
+         )
 
 -- Helper function to get a transaction from the wallet database. The function
 -- will look across all accounts and return the first available transaction. If

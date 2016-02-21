@@ -106,6 +106,7 @@ import Network.Haskoin.Crypto
 import Network.Haskoin.Script
 import Network.Haskoin.Transaction
 import Network.Haskoin.Node
+import Network.Haskoin.Node.HeaderTree
 import Network.Haskoin.Util
 import Network.Haskoin.Wallet.Database
 
@@ -355,6 +356,7 @@ data WalletRequest
     | GetBalanceR !AccountName !Word32 !Bool
     | PostNodeR !NodeAction
     | DeleteTxIdR !TxHash
+    | GetSyncR !AccountName !BlockHash !Word32
 
 -- TODO: Set omitEmptyContents on aeson-0.9
 $(deriveJSON
@@ -418,6 +420,8 @@ data JsonTx = JsonTx
     , jsonTxCreated         :: !UTCTime
     -- Optional confirmation
     , jsonTxConfirmations   :: !(Maybe Word32)
+    , jsonTxBestBlock       :: !(Maybe BlockHash)
+    , jsonTxBestBlockHeight :: !(Maybe BlockHeight)
     }
     deriving (Eq, Show, Read)
 

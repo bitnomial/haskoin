@@ -2,17 +2,18 @@ module Network.Haskoin.Wallet.Server.Handler where
 
 import Control.Arrow (first)
 import Control.Monad (when, unless, liftM)
-import Control.Exception (SomeException(..), throwIO, tryJust)
-import Control.Monad.Trans (liftIO, MonadIO, lift)
-import Control.Monad.Logger (MonadLogger, logInfo, logError)
+import Control.Exception (SomeException(..), tryJust)
+import Control.Monad.Trans (MonadIO, liftIO, lift)
+import Control.Monad.Logger (MonadLoggerIO, logInfo, logError)
 import Control.Monad.Base (MonadBase)
-import Control.Monad.Catch (MonadThrow)
+import Control.Monad.Catch (MonadThrow, throwM)
 import Control.Monad.Trans.Resource (MonadResource)
 import Control.Monad.Trans.Control (MonadBaseControl, liftBaseOp_)
 import qualified Control.Concurrent.MSem as Sem (MSem, with)
 import qualified Control.Monad.State as S (StateT, evalStateT, gets)
 
 import Data.Aeson (Value(..), toJSON)
+import Data.Aeson.Types (emptyArray)
 import Data.Word (Word32)
 import Data.Text (Text, pack, unpack)
 import qualified Data.Map.Strict as M (intersectionWith, fromList, elems)
@@ -27,6 +28,7 @@ import Database.Persist.Sql
     , runSqlPersistMPool
     )
 
+import Network.Haskoin.Block
 import Network.Haskoin.Crypto
 import Network.Haskoin.Transaction
 import Network.Haskoin.Node.STM
@@ -37,6 +39,7 @@ import Network.Haskoin.Node.Peer
 import Network.Haskoin.Wallet.Model
 import Network.Haskoin.Wallet.Accounts
 import Network.Haskoin.Wallet.Transaction
+import Network.Haskoin.Wallet.Block
 import Network.Haskoin.Wallet.Settings
 import Network.Haskoin.Wallet.Types
 
@@ -62,7 +65,7 @@ runDBPool :: MonadBaseControl IO m
           => Sem.MSem Int -> ConnectionPool -> SqlPersistT m a -> m a
 runDBPool sem pool action = liftBaseOp_ (Sem.with sem) $ runSqlPool action pool
 
-tryDBPool :: (MonadIO m, MonadLogger m)
+tryDBPool :: MonadLoggerIO m
           => Sem.MSem Int -> ConnectionPool -> SqlPersistM a -> m (Maybe a)
 tryDBPool sem pool action = do
     resE <- liftIO $ Sem.with sem $ tryJust f $ runSqlPersistMPool action pool
@@ -83,8 +86,7 @@ runNode action = do
 
 {- Server Handlers -}
 
-getAccountsR :: ( MonadLogger m
-                , MonadIO m
+getAccountsR :: ( MonadLoggerIO m
                 , MonadBaseControl IO m
                 , MonadBase IO m
                 , MonadThrow m
@@ -103,9 +105,7 @@ getAccountsR lq@ListRequest{..} = do
     return $ Just $ toJSON $ ListResult (map (toJsonAccount Nothing) accs) cnt
 
 postAccountsR
-    :: ( MonadResource m, MonadThrow m, MonadLogger m
-       , MonadBaseControl IO m, MonadIO m
-       )
+    :: (MonadResource m, MonadThrow m, MonadLoggerIO m, MonadBaseControl IO m)
     => NewAccount -> Handler m (Maybe Value)
 postAccountsR newAcc@NewAccount{..} = do
     $(logInfo) $ format $ unlines
@@ -119,9 +119,7 @@ postAccountsR newAcc@NewAccount{..} = do
     return $ Just $ toJSON $ toJsonAccount mnemonicM newAcc'
 
 postAccountRenameR
-    :: ( MonadResource m, MonadThrow m, MonadLogger m
-       , MonadBaseControl IO m, MonadIO m
-       )
+    :: (MonadResource m, MonadThrow m, MonadLoggerIO m, MonadBaseControl IO m)
     => AccountName -> AccountName -> Handler m (Maybe Value)
 postAccountRenameR oldName newName = do
     $(logInfo) $ format $ unlines
@@ -134,7 +132,7 @@ postAccountRenameR oldName newName = do
         renameAccount accE newName
     return $ Just $ toJSON $ toJsonAccount Nothing newAcc
 
-getAccountR :: (MonadLogger m, MonadBaseControl IO m, MonadIO m, MonadThrow m)
+getAccountR :: (MonadLoggerIO m, MonadBaseControl IO m, MonadThrow m)
             => AccountName -> Handler m (Maybe Value)
 getAccountR name = do
     $(logInfo) $ format $ unlines
@@ -145,9 +143,7 @@ getAccountR name = do
     return $ Just $ toJSON $ toJsonAccount Nothing acc
 
 postAccountKeysR
-    :: ( MonadResource m, MonadThrow m, MonadLogger m
-       , MonadBaseControl IO m, MonadIO m
-       )
+    :: (MonadResource m, MonadThrow m, MonadLoggerIO m, MonadBaseControl IO m)
     => AccountName -> [XPubKey] -> Handler m (Maybe Value)
 postAccountKeysR name keys = do
     $(logInfo) $ format $ unlines
@@ -162,10 +158,9 @@ postAccountKeysR name keys = do
     whenOnline $ when (isCompleteAccount newAcc) updateNodeFilter
     return $ Just $ toJSON $ toJsonAccount Nothing newAcc
 
-postAccountGapR :: ( MonadLogger m
+postAccountGapR :: ( MonadLoggerIO m
                    , MonadBaseControl IO m
                    , MonadBase IO m
-                   , MonadIO m
                    , MonadThrow m
                    , MonadResource m
                    )
@@ -185,7 +180,7 @@ postAccountGapR name (SetAccountGap gap) = do
     whenOnline updateNodeFilter
     return $ Just $ toJSON $ toJsonAccount Nothing newAcc
 
-getAddressesR :: (MonadLogger m, MonadBaseControl IO m, MonadIO m, MonadThrow m)
+getAddressesR :: (MonadLoggerIO m, MonadBaseControl IO m, MonadThrow m)
               => AccountName
               -> AddressType
               -> Word32
@@ -224,7 +219,7 @@ getAddressesR name addrType minConf offline listReq = do
         in  M.intersectionWith (,) (M.fromList $ map f addrs) (M.fromList bals)
 
 getAddressesUnusedR
-    :: (MonadLogger m, MonadBaseControl IO m, MonadIO m, MonadThrow m)
+    :: (MonadLoggerIO m, MonadBaseControl IO m, MonadThrow m)
     => AccountName -> AddressType -> ListRequest -> Handler m (Maybe Value)
 getAddressesUnusedR name addrType lq@ListRequest{..} = do
     $(logInfo) $ format $ unlines
@@ -242,7 +237,7 @@ getAddressesUnusedR name addrType lq@ListRequest{..} = do
 
     return $ Just $ toJSON $ ListResult (map (`toJsonAddr` Nothing) addrs) cnt
 
-getAddressR :: (MonadLogger m, MonadBaseControl IO m, MonadIO m, MonadThrow m)
+getAddressR :: (MonadLoggerIO m, MonadBaseControl IO m, MonadThrow m)
             => AccountName -> KeyIndex -> AddressType
             -> Word32 -> Bool
             -> Handler m (Maybe Value)
@@ -263,7 +258,7 @@ getAddressR name i addrType minConf offline = do
             _           -> (entityVal addrE, Nothing)
     return $ Just $ toJSON $ toJsonAddr addr balM
 
-putAddressR :: (MonadLogger m, MonadBaseControl IO m, MonadIO m, MonadThrow m)
+putAddressR :: (MonadLoggerIO m, MonadBaseControl IO m, MonadThrow m)
             => AccountName
             -> KeyIndex
             -> AddressType
@@ -283,9 +278,8 @@ putAddressR name i addrType (AddressLabel label) = do
 
     return $ Just $ toJSON $ toJsonAddr newAddr Nothing
 
-postAddressesR :: ( MonadLogger m
+postAddressesR :: ( MonadLoggerIO m
                   , MonadBaseControl IO m
-                  , MonadIO m
                   , MonadThrow m
                   , MonadBase IO m
                   , MonadResource m
@@ -310,7 +304,7 @@ postAddressesR name i addrType = do
 
     return $ Just $ toJSON cnt
 
-getTxsR :: (MonadLogger m, MonadBaseControl IO m, MonadIO m, MonadThrow m)
+getTxsR :: (MonadLoggerIO m, MonadBaseControl IO m, MonadThrow m)
         => AccountName -> ListRequest -> Handler m (Maybe Value)
 getTxsR name lq@ListRequest{..} = do
     $(logInfo) $ format $ unlines
@@ -321,15 +315,15 @@ getTxsR name lq@ListRequest{..} = do
         , "  Reversed    : " ++ show listReverse
         ]
 
-    (res, cnt, height) <- runDB $ do
+    (res, cnt, bb) <- runDB $ do
         Entity ai _ <- getAccount name
-        (_, height) <- getBestBlock
+        bb <- getBestBlock
         (res, cnt) <- txs ai lq
-        return (res, cnt, height)
+        return (res, cnt, bb)
 
-    return $ Just $ toJSON $ ListResult (map (`toJsonTx` Just height) res) cnt
+    return $ Just $ toJSON $ ListResult (map (`toJsonTx` Just bb) res) cnt
 
-getAddrTxsR :: (MonadLogger m, MonadBaseControl IO m, MonadIO m, MonadThrow m)
+getAddrTxsR :: (MonadLoggerIO m, MonadBaseControl IO m, MonadThrow m)
             => AccountName -> KeyIndex -> AddressType -> ListRequest
             -> Handler m (Maybe Value)
 getAddrTxsR name index addrType lq@ListRequest{..} = do
@@ -343,24 +337,24 @@ getAddrTxsR name index addrType lq@ListRequest{..} = do
         , "  Reversed     : " ++ show listReverse
         ]
 
-    (res, cnt, height) <- runDB $ do
+    (res, cnt, bb) <- runDB $ do
         accE <- getAccount name
         addrE <- getAddress accE addrType index
-        (_, height) <- getBestBlock
+        bb <- getBestBlock
         (res, cnt) <- addrTxs accE addrE lq
-        return (res, cnt, height)
+        return (res, cnt, bb)
 
-    return $ Just $ toJSON $ ListResult (map (`toJsonTx` Just height) res) cnt
+    return $ Just $ toJSON $ ListResult (map (`toJsonTx` Just bb) res) cnt
 
-postTxsR :: ( MonadLogger m, MonadBaseControl IO m, MonadBase IO m
-            , MonadIO m, MonadThrow m, MonadResource m
+postTxsR :: ( MonadLoggerIO m, MonadBaseControl IO m, MonadBase IO m
+            , MonadThrow m, MonadResource m
             )
          => AccountName -> Maybe XPrvKey -> TxAction -> Handler m (Maybe Value)
 postTxsR name masterM action = do
-    (accE@(Entity ai _), height) <- runDB $ do
+    (accE@(Entity ai _), bb) <- runDB $ do
         accE <- getAccount name
-        (_, height) <- getBestBlock
-        return (accE, height)
+        bb <- getBestBlock
+        return (accE, bb)
 
     (txRes, newAddrs) <- case action of
         CreateTx rs fee minconf rcptFee sign -> do
@@ -384,7 +378,7 @@ postTxsR name masterM action = do
                 (res, newAddrs) <- importTx tx ai
                 case filter ((== ai) . walletTxAccount) res of
                     (txRes:_) -> return (txRes, newAddrs)
-                    _ -> liftIO . throwIO $ WalletException
+                    _ -> throwM $ WalletException
                         "Could not import the transaction"
         SignTx txid -> do
             $(logInfo) $ format $ unlines
@@ -396,7 +390,7 @@ postTxsR name masterM action = do
                 (res, newAddrs) <- signAccountTx accE masterM txid
                 case filter ((== ai) . walletTxAccount) res of
                     (txRes:_) -> return (txRes, newAddrs)
-                    _ -> liftIO . throwIO $ WalletException
+                    _ -> throwM $ WalletException
                         "Could not import the transaction"
     whenOnline $ do
         -- Update the bloom filter
@@ -404,9 +398,9 @@ postTxsR name masterM action = do
         -- If the transaction is pending, broadcast it to the network
         when (walletTxConfidence txRes == TxPending) $
             runNode $ broadcastTxs [walletTxHash txRes]
-    return $ Just $ toJSON $ toJsonTx txRes (Just height)
+    return $ Just $ toJSON $ toJsonTx txRes (Just bb)
 
-getTxR :: (MonadLogger m, MonadBaseControl IO m, MonadIO m, MonadThrow m)
+getTxR :: (MonadLoggerIO m, MonadBaseControl IO m, MonadThrow m)
        => AccountName -> TxHash -> Handler m (Maybe Value)
 getTxR name txid = do
     $(logInfo) $ format $ unlines
@@ -414,14 +408,14 @@ getTxR name txid = do
         , "  Account name: " ++ unpack name
         , "  TxId        : " ++ cs (txHashToHex txid)
         ]
-    (res, height) <- runDB $ do
+    (res, bb) <- runDB $ do
         Entity ai _ <- getAccount name
-        (_, height) <- getBestBlock
+        bb <- getBestBlock
         res <- getAccountTx ai txid
-        return (res, height)
-    return $ Just $ toJSON $ toJsonTx res (Just height)
+        return (res, bb)
+    return $ Just $ toJSON $ toJsonTx res (Just bb)
 
-deleteTxIdR :: (MonadIO m, MonadLogger m, MonadThrow m, MonadBaseControl IO m)
+deleteTxIdR :: (MonadLoggerIO m, MonadThrow m, MonadBaseControl IO m)
             => TxHash -> Handler m (Maybe Value)
 deleteTxIdR txid = do
     $(logInfo) $ format $ unlines
@@ -431,7 +425,7 @@ deleteTxIdR txid = do
     runDB $ deleteTx txid
     return Nothing
 
-getBalanceR :: (MonadLogger m, MonadBaseControl IO m, MonadIO m, MonadThrow m)
+getBalanceR :: (MonadLoggerIO m, MonadBaseControl IO m, MonadThrow m)
             => AccountName -> Word32 -> Bool
             -> Handler m (Maybe Value)
 getBalanceR name minconf offline = do
@@ -446,7 +440,7 @@ getBalanceR name minconf offline = do
         accountBalance ai minconf offline
     return $ Just $ toJSON bal
 
-getOfflineTxR :: ( MonadLogger m, MonadIO m, MonadBaseControl IO m
+getOfflineTxR :: ( MonadLoggerIO m, MonadBaseControl IO m
                  , MonadBase IO m, MonadThrow m, MonadResource m
                  )
               => AccountName -> TxHash -> Handler m (Maybe Value)
@@ -461,7 +455,7 @@ getOfflineTxR accountName txid = do
         getOfflineTxData ai txid
     return $ Just $ toJSON dat
 
-postOfflineTxR :: ( MonadLogger m, MonadIO m, MonadBaseControl IO m
+postOfflineTxR :: ( MonadLoggerIO m, MonadBaseControl IO m
                   , MonadBase IO m, MonadThrow m, MonadResource m
                   )
                => AccountName
@@ -481,7 +475,7 @@ postOfflineTxR accountName masterM tx signData = do
         toDat CoinSignData{..} = (coinSignScriptOutput, coinSignOutPoint)
     return $ Just $ toJSON $ TxCompleteRes signedTx complete
 
-postNodeR :: (MonadLogger m, MonadBaseControl IO m, MonadIO m)
+postNodeR :: (MonadLoggerIO m, MonadBaseControl IO m, MonadThrow m)
           => NodeAction -> Handler m (Maybe Value)
 postNodeR action = case action of
     NodeActionRescan tM -> do
@@ -502,8 +496,30 @@ postNodeR action = case action of
         status <- runNode $ atomicallyNodeT nodeStatus
         return $ Just $ toJSON status
   where
-    err = liftIO . throwIO $ WalletException
+    err = throwM $ WalletException
         "No keys have been generated in the wallet"
+
+getSyncR :: (MonadThrow m, MonadLoggerIO m, MonadBaseControl IO m)
+         => AccountName -> BlockHash -> Word32 -> Handler m (Maybe Value)
+getSyncR acc blockHash n = do
+    nodeState <- S.gets handlerNodeState >>= maybe
+        (throwM $ WalletException "No node state available") return
+    runDB $ do
+        $(logInfo) $ format $ unlines
+            [ "GetSyncR"
+            , "  Account name: " ++ cs acc
+            , "  Block Hash  : " ++ cs (blockHashToHex blockHash)
+            , "  Max blocks  : " ++ show n
+            ]
+        (bestHash, _) <- getBestBlock
+        blocks <- fmap (if n > 0 then take $ fromIntegral n else id) $ lift $
+            runNodeT nodeState $ runHeaderTree $ mainChain bestHash blockHash
+        case blocks of
+            [] -> return $ Just emptyArray
+            b:_ -> do
+                Entity ai _ <- getAccount acc
+                ts <- accTxsFromBlock ai (nodeHeaderHeight b) n
+                return $ Just $ toJSON $ blockTxs blocks ts
 
 {- Helpers -}
 
@@ -513,7 +529,7 @@ whenOnline handler = do
     when (mode == SPVOnline) handler
 
 updateNodeFilter
-    :: (MonadBaseControl IO m, MonadIO m, MonadLogger m, MonadThrow m)
+    :: (MonadBaseControl IO m, MonadLoggerIO m, MonadThrow m)
     => Handler m ()
 updateNodeFilter = do
     $(logInfo) $ format "Sending a new bloom filter"

@@ -12,15 +12,18 @@ module Network.Haskoin.Node.HeaderTree
 , isChainReorg
 , isSideChain
 , isKnownChain
+, isParentOf
 , blockLocator
 , blockLocatorHeight
 , blockLocatorSide
 , blockLocatorPartial
+, findSplitNode
 , getNodeWindow
 , bestBlockHeaderHeight
 , getBlockHeaderHeight
 , getNodeAtTimestamp
 , genesisNode
+, getChildNode
 , getParentNode
 ) where
 
@@ -391,6 +394,17 @@ findSplitNode =
             par <- fromMaybe e <$> getParentNode y
             go xs (y:ys) x par
     e = error "findSplitNode: Could not get parent node"
+
+isParentOf :: HeaderTree m
+           => BlockHeaderNode
+           -> BlockHeaderNode
+           -> m Bool
+isParentOf block node =
+    getParentNode block >>= maybe (return False) f
+  where
+    f x | nodeHeaderHeight x >  nodeHeaderHeight node = isParentOf x node
+        | nodeHeaderHeight x <  nodeHeaderHeight node = return False
+        | otherwise = return $ nodeBlockHash x == nodeBlockHash node
 
 -- | Finds the parent of a BlockHeaderNode
 getParentNode :: HeaderTree m => BlockHeaderNode -> m (Maybe BlockHeaderNode)
