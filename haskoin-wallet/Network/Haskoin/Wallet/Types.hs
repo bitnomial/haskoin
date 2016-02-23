@@ -31,6 +31,8 @@ module Network.Haskoin.Wallet.Types
 , TxCompleteRes(..)
 , ListResult(..)
 , RescanRes(..)
+, JsonBlock(..)
+, Notif(..)
 
 -- Helper Types
 , WalletException(..)
@@ -470,7 +472,23 @@ data WalletResponse a
     | ResponseValid { responseResult :: !(Maybe a)  }
     deriving (Eq, Show)
 
-$(deriveJSON (dropSumLabels 8 8 "status" ) ''WalletResponse)
+$(deriveJSON (dropSumLabels 8 8 "status") ''WalletResponse)
+
+data JsonBlock = JsonBlock
+    { jsonBlockHash   :: BlockHash
+    , jsonBlockHeight :: BlockHeight
+    , jsonBlockPrev   :: BlockHash
+    , jsonBlockTxs    :: [JsonTx]
+    } deriving (Eq, Show, Read)
+
+$(deriveJSON (dropFieldLabel 9) ''JsonBlock)
+
+data Notif
+    = NotifBlock JsonBlock
+    | NotifTx    JsonTx
+    deriving (Eq, Show, Read)
+
+$(deriveJSON (dropSumLabels 5 5 "type") ''Notif)
 
 {- Helper Types -}
 
