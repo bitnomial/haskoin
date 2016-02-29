@@ -57,7 +57,7 @@ import qualified Control.Monad.Reader as R (ReaderT, ask, asks)
 
 import Data.Maybe (listToMaybe, isNothing, fromMaybe, isJust, maybeToList)
 import Data.List (intercalate, intersperse)
-import qualified Data.ByteString.Char8 as B8 (putStrLn, unwords)
+import qualified Data.ByteString.Char8 as B8 (hPutStrLn, putStrLn, unwords)
 import Data.Text (Text, pack, unpack, splitOn)
 import Data.Word (Word32, Word64)
 import qualified Data.Yaml as YAML (encode)
@@ -95,6 +95,7 @@ import Network.Haskoin.Wallet.Database
 
 import Data.Restricted (rvalue)
 import System.ZMQ4 (curveKeyPair)
+import System.IO (stderr)
 import Text.Read (readMaybe)
 
 import qualified System.Console.Haskeline as Haskeline
@@ -544,11 +545,14 @@ sendZmq :: (FromJSON a, ToJSON a)
         -> Handler (Either String (WalletResponse a))
 sendZmq req = do
     cfg <- R.ask
+    let msg = cs $ encode req
+    when (configVerbose cfg) $ liftIO $
+        B8.hPutStrLn stderr $ "Outgoing JSON: " `mappend` msg
     liftIO $ runZMQ $ do
         sock <- socket Req
         setupAuth cfg sock
         connect sock (configConnect cfg)
-        send sock [] (cs $ encode req)
+        send sock [] msg
         eitherDecode . cs <$> receive sock
 
 setupAuth :: (SocketType t)
