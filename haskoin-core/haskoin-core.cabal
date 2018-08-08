@@ -72,7 +72,7 @@ library
                          Network.Haskoin.Test.Transaction
                          Network.Haskoin.Test.Block
                          Paths_haskoin_core
-    build-depends:       aeson >= 1.2 && < 1.4
+    build-depends:       aeson >= 1.2 && < 1.5
                        , base >= 4.8 && < 5
                        , byteable >= 0.1 && < 0.2
                        , bytestring >= 0.10 && < 0.11

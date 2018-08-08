@@ -1,12 +1,14 @@
-resolver: lts-12.2
+resolver: nightly-2018-08-08
+
 flags: {}
+
 packages:
-- haskoin-core
-- haskoin-node
-- haskoin-wallet
+  - haskoin-core
+  # - haskoin-node
+  # - haskoin-wallet
+
 extra-deps:
-- daemons-0.2.1
-- pbkdf-1.1.1.1
-- murmur3-1.0.3
-- secp256k1-0.5.2
-- concurrent-extra-0.7.0.10
+  - daemons-0.2.1
+  - pbkdf-1.1.1.1
+  - murmur3-1.0.3
+  - secp256k1-0.5.2
